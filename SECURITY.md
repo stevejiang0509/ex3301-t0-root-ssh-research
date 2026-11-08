@@ -1,6 +1,6 @@
 # Security and disclosure
 
-This is an owner-authorized case study of one EX3301-T0 on official `V5.50(ABVY.7.2)C0`. It is not a vendor advisory or an assertion that every EX3301-T0 firmware version is affected. The observed issue is an authenticated syslog-ng configuration injection, not a defect in the SSH protocol or Dropbear authentication. No cross-reboot persistence was verified.
+This is an owner-authorized case study of one EX3301-T0 on official `V5.50(ABVY.7.2)C0`. Zyxel's [CVE-2026-6952 advisory](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) provides the broader official affected-model and patch list. Our detailed syslog-ng path and root UID result are local findings; the vendor advisory does not document those internals. This repository is not itself a vendor advisory, and no cross-reboot root access was verified.
 
 If you suspect another version is affected, contact the repository owner privately through GitHub before posting a working device-specific exploit. A useful report includes the exact model and firmware build, a sanitized observation, the affected input and output boundary, and whether the original configuration was restored. Please do not place live passwords, session tokens, certificate or SSH host-key fingerprints, serial numbers, MAC addresses, personal IP addresses, complete configuration exports, or firmware dumps in an issue or pull request.
 

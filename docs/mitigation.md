@@ -1,6 +1,6 @@
 # Mitigation and verification guidance
 
-The verified issue is an **authenticated `LogServer` value crossing into generated syslog-ng configuration** on one EX3301-T0 running official `V5.50(ABVY.7.2)C0`. A separate runtime account change turned temporary UID 0 execution into root SSH for the current boot. The evidence does not establish an SSH daemon vulnerability or a fixed firmware version.
+The locally verified issue is an **authenticated `LogServer` value crossing into generated syslog-ng configuration** on one EX3301-T0 running official `V5.50(ABVY.7.2)C0`. A separate runtime account change turned temporary UID 0 execution into root SSH for the current boot. This is not an SSH daemon vulnerability. Zyxel separately identifies the `LogServer` issue as [CVE-2026-6952](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) and lists `5.50(ABVY.8.1)C0` as the EX3301-T0 patch; that patch was **not** tested in this case study.
 
 ## Firmware maintainers
 
@@ -14,7 +14,7 @@ The verified issue is an **authenticated `LogServer` value crossing into generat
 ## Device owners and administrators
 
 1. Restrict the web management interface and SSH to a trusted LAN or dedicated management network. Disable unneeded remote management access, and review which accounts can change logging settings.
-2. Use only firmware the vendor identifies as applicable to the exact model and operator variant. Preserve a safe configuration backup and recovery path before updating. This research has not verified that any particular release fixes the issue.
+2. For retail EX3301-T0, Zyxel lists `5.50(ABVY.8.1)C0` as the patch for this CVE; obtain the applicable file through Zyxel support and preserve a safe backup and recovery path before updating. Zyxel's table excludes ISP-customized models and directs those owners to their ISP for an appropriate build. This project has not locally installed or validated the patch and does not establish that a retail image is safe for an ISP-customized unit.
 3. If exploitation is suspected, preserve relevant evidence before recovery: the logging settings, generated syslog-ng configuration, management activity, and runtime account UID/GID/shell values. Treat a changed `admin` shell or UID 0 as a reason for further investigation. Restore trusted settings and credentials, then follow the vendor's guidance for reset or reinstallation if device integrity is uncertain.
 4. Rotate affected management credentials and review unauthorized management sessions, root SSH logins, and changes that could survive reboot. A runtime account file returning to normal after restart does not establish that the device was never modified.
 

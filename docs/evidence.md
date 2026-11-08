@@ -2,6 +2,12 @@
 
 The findings in this repository come from one owner-controlled Zyxel EX3301-T0, offline analysis of its official `V5.50(ABVY.7.2)C0` image, and bounded live observations. This page distinguishes **what was directly observed** from **what the observations suggest**. The original reports contain device-specific information and are deliberately not published.
 
+## Vendor context and source boundary
+
+Zyxel's [21 July 2026 advisory](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) identifies CVE-2026-6952 as command injection in the syslog `LogServer` field. Its 42-model affected-products table includes EX3301-T0 firmware `5.50(ABVY.8)C0` and earlier and names `5.50(ABVY.8.1)C0` as the patch. Zyxel says the table covers products within its vulnerability support period and excludes ISP-customized models. The repository's [advisory summary](official-advisory.md) transcribes that table.
+
+The [Zyxel-authored CVE JSON record](https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/2026/6xxx/CVE-2026-6952.json) describes the same `LogServer` issue but its structured `affected` array lists only AX7501-B1 firmware. It links to the broader vendor advisory; the array should not be presented as the advisory's complete product list. Neither official source discloses the syslog-ng configuration path or root UID. Those narrower claims rest on the 7.2C0 firmware analysis and the one-device observation recorded below.
+
 ## Core claim and proof chain
 
 | Claim | Evidence type | What the record actually establishes |

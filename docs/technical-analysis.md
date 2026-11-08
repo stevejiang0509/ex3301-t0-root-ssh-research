@@ -4,6 +4,8 @@
 
 This case concerns one Zyxel EX3301-T0 running the official `V5.50(ABVY.7.2)C0` firmware. The findings combine static analysis of that firmware with an authorized test on the device. They do not establish that another firmware version, device revision, or management role is affected. The analyzed firmware sample has SHA-256 `1958230af33f46879f592f90fbd5cea0e16a51d5c352fa3c9560cb832df472bc`.
 
+Zyxel's [21 July 2026 advisory](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) identifies CVE-2026-6952 as command injection in the syslog `LogServer` field and lists EX3301-T0 firmware `5.50(ABVY.8)C0` and earlier as affected, with `5.50(ABVY.8.1)C0` as the patch. The advisory does not describe syslog-ng configuration injection or execution as root. Those details below come from the analyzed 7.2C0 image and the one-device test; see the [advisory summary](official-advisory.md) for vendor scope.
+
 An authenticated administrator was able to make a logging component execute with Linux `uid=0`. The temporary execution channel was then used to change only the running `admin` account's UID, GID, and login shell. A **new** SSH session reached a full root shell, and a separate `id -u` check returned `0`. That SSH result was verified only during the current boot.
 
 The entry point is **configuration syntax injection through `LogServer` into a generated syslog-ng file**. This is an authenticated privilege escalation. SSH served as the later login and verification path; the evidence does not identify a flaw in the SSH daemon, SSH protocol, or SSH authentication. No unauthenticated path was tested.

@@ -1,6 +1,6 @@
 # EX3301-T0: from stock Y1 access to a root SSH shell
 
-This repository documents one owner-authorized Zyxel EX3301-T0 investigation. The device started on Hyperoptic `V5.50(ABVY.4.1)Y1`, was upgraded to official Zyxel `V5.50(ABVY.7.2)C0`, and was then used to verify an **authenticated LogServer-to-syslog-ng configuration injection**. A temporary root process was observed. A separate change to the runtime `admin` account made a fresh SSH session run as `uid=0`.
+This repository documents one owner-authorized Zyxel EX3301-T0 investigation. The device started on Hyperoptic `V5.50(ABVY.4.1)Y1`, was upgraded to official Zyxel `V5.50(ABVY.7.2)C0`, and was then used to verify an **authenticated LogServer-to-syslog-ng configuration injection**. A temporary root process was observed. A separate change to the runtime `admin` account made a fresh SSH session run as `uid=0`. Zyxel's advisory identifies the `LogServer` issue as **CVE-2026-6952** and lists a broader affected-product range.
 
 The vulnerability is in log configuration generation, **not in the SSH protocol or Dropbear authentication**. The full root SSH result was verified for the current boot only. No reboot-persistent root access was demonstrated.
 
@@ -17,7 +17,13 @@ The repository contains sanitized notes and a local-only string demo. It contain
 | SSH baseline | `admin` reached restricted `ZySH>` on Y1 and C0; a direct `root` login with the existing administrator credential failed on C0 |
 | Proven root behavior | `id` printed `uid=0(root) gid=0(root)`; after a runtime account change, a new SSH session independently returned `id -u = 0` |
 
-No claim is made for other hardware revisions, firmware versions, unauthenticated users, or access from the WAN.
+Our live root proof covers only the device and C0 image above. Zyxel's separate affected-product list is summarized below. Neither source establishes an unauthenticated path or WAN access in this case.
+
+## Zyxel's official affected-product list
+
+Zyxel's [21 July 2026 advisory for CVE-2026-6952](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) describes an administrator-authenticated command injection in the syslog `LogServer` field. It lists **EX3301-T0 `5.50(ABVY.8)C0` and earlier** as affected and **`5.50(ABVY.8.1)C0`** as the available patch. Thus the `7.2C0` build tested here falls within Zyxel's published affected range. The advisory lists **42 affected models**: 29 DSL/Ethernet CPE models, 10 fiber ONTs, and 3 wireless extenders. The [complete official list](docs/official-advisory.md) includes every model, affected version, and listed patch.
+
+Zyxel explicitly excludes ISP-customized models from that table. The earlier Hyperoptic Y1 build in this device's history was **not** separately tested for the LogServer vulnerability. The vendor's patch listing is not a local validation that `8.1C0` is safe to install on an ISP-customized unit; Zyxel directs ISP customers to their provider for the appropriate firmware. The advisory confirms the `LogServer` entry point and OS-command effect; the syslog-ng configuration path and `uid=0` result below come from this project's own analysis and test.
 
 ## The observed sequence
 
@@ -64,6 +70,7 @@ The original `Enable=false` setting did not prevent the proof because the inject
 ## Read the case study
 
 - [Chronology](docs/chronology.md) — initial access through the root SSH verification.
+- [Official advisory scope](docs/official-advisory.md) — Zyxel's CVE-2026-6952 model list, affected versions, and patch versions.
 - [Firmware check commands](docs/firmware-checks.md) — how the two Y1 checks were turned off and what the readback proves.
 - [Technical analysis](docs/technical-analysis.md) — authenticated input, config generation, root process, and runtime account promotion.
 - [Evidence and limits](docs/evidence.md) — sanitized evidence ledger with hashes of private originals.
