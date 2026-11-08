@@ -1,0 +1,18 @@
+# Never commit live device material.
+*.bin
+*.trx
+*.img
+*.zip
+*.tar
+*.tar.gz
+*.conf
+*.pem
+*.key
+*known_hosts*
+*backup*
+*recovery*
+*status*.json
+.env*
+node_modules/
+coverage/
+*.log

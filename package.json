@@ -1,0 +1,15 @@
+{
+  "name": "ex3301-t0-root-ssh-research",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sanitized offline case study of authenticated LogServer injection on EX3301-T0 7.2C0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo": "node tools/offline-demo.mjs",
+    "test": "node --test tools/offline-demo.test.mjs"
+  },
+  "license": "MIT"
+}
