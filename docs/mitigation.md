@@ -1,20 +1,23 @@
-# 修复与防护建议
+# Mitigation and verification guidance
 
-## 对固件维护者
+The verified issue is an **authenticated `LogServer` value crossing into generated syslog-ng configuration** on one EX3301-T0 running official `V5.50(ABVY.7.2)C0`. A separate runtime account change turned temporary UID 0 execution into root SSH for the current boot. The evidence does not establish an SSH daemon vulnerability or a fixed firmware version.
 
-1. **在服务端验证 `LogServer`。**按产品实际支持的格式解析并规范化 IPv4、IPv6 或域名；拒绝不符合该格式的值。前端输入框的 `maxlength` 和禁用状态不能替代服务端校验。DAL 和配置后端都应验证，避免不同写入路径绕过其中一层。
-2. **安全生成 syslog-ng 配置。**不要把用户输入直接放入配置语言的引号和语句中。对所有可进入配置文本的字段使用可靠的上下文转义或结构化配置生成，并在替换运行中配置前执行语法验证。无效配置应保持旧配置与现有服务运行。
-3. **限制日志服务的执行能力。**评估是否需要 `program()` 源；如非必需，从可加载模块或允许的配置语法中移除。使日志服务以完成任务所需的最低权限运行，防止配置错误直接获得 root 权限。
-4. **加入回归测试。**覆盖远程、仅本地和混合模式；在每种模式下提交含引号、分隔符、换行及边界长度的服务器值，确认服务端拒绝或正确转义，最终配置仍能解析，且不会出现额外的 `source`、`log` 或 `program()` 语句。测试配置失败时服务不中断、旧配置不被替换。
-5. **检查账户生成和管理边界。**SSH 管理账号的 shell、UID/GID 不应能被日志配置路径间接改变。监测运行时账户文件与原厂账户配置之间的非预期差异。
+## Firmware maintainers
 
-## 对设备所有者或管理员
+1. **Validate `LogServer` on the server.** Parse and normalize only the IPv4, IPv6, or host-name forms the product actually supports, then reject anything outside that grammar. Apply the rule at both the DAL entry point and the configuration-generation boundary so another writer cannot bypass a single check. The web input's length limit and disabled state in `Local` mode are insufficient.
+2. **Keep data separate from syslog-ng syntax.** Never insert an untrusted value directly into quoted configuration text. Use a context-correct encoder or a generator that emits only fixed, allowed statements, and validate the resulting configuration before replacing the active file. Reject invalid output while preserving the previous valid configuration and running service. A blacklist of particular punctuation or words is too narrow for a configuration language.
+3. **Make `Enable=false` a real execution boundary.** The analyzed code emits the remote destination before it skips normal category routes. Regression checks must confirm that a submitted value cannot add an independent `source` or `log` route when logging is disabled. Fix the data-to-syntax boundary for every mode, including `Remote` and `LocalRemote`; moving or relying on the category gate alone does not address injected top-level statements.
+4. **Reduce the logging service's process privileges and capabilities.** Determine whether this product needs the syslog-ng `program()` source. If it does not, remove it from the available configuration or loaded modules. Run logging with the least privileges the device needs, and prevent a configuration error from gaining a root process where practical.
+5. **Protect account state.** Keep log configuration changes from modifying account files. Check for unexpected differences between runtime UID, GID, and shell values and the stock account records, and investigate a management account that unexpectedly becomes UID 0.
+6. **Test failure and recovery.** Cover `Local`, `Remote`, and `LocalRemote`, with `Enable` both true and false. Exercise valid server values and malformed values containing quotes, separators, newlines, and boundary lengths. Assert that invalid values are rejected or safely encoded, generated configuration parses with only the intended destination and routes, and logging remains available after a rejected update. Include a test that a transition back to `Local` actually clears a previously stored remote server value.
 
-1. 将管理界面和 SSH 限制在可信局域网或专用管理网络，关闭不需要的 WAN 远程管理入口；避免把管理端口直接暴露到互联网。
-2. 使用厂商明确适用于设备型号及运营商变体的修复固件。更新前先备份个人配置并确认恢复方式；本项目没有验证某个特定版本已修复此问题。
-3. 如果怀疑遭到利用，检查日志服务器设置、生成的 syslog-ng 配置，以及运行时账户文件中账号的 UID、GID 和 shell。保存必要的取证材料后，恢复可信配置和凭据，并按厂商建议重新刷写或重置。
-4. 将管理密码视为敏感信息并轮换。检查是否存在未经授权的管理会话、异常 root SSH 登录及其他持久化修改。运行时文件在重启后恢复，并不证明设备从未被修改。
+## Device owners and administrators
 
-## 验证修复是否有效
+1. Restrict the web management interface and SSH to a trusted LAN or dedicated management network. Disable unneeded remote management access, and review which accounts can change logging settings.
+2. Use only firmware the vendor identifies as applicable to the exact model and operator variant. Preserve a safe configuration backup and recovery path before updating. This research has not verified that any particular release fixes the issue.
+3. If exploitation is suspected, preserve relevant evidence before recovery: the logging settings, generated syslog-ng configuration, management activity, and runtime account UID/GID/shell values. Treat a changed `admin` shell or UID 0 as a reason for further investigation. Restore trusted settings and credentials, then follow the vendor's guidance for reset or reinstallation if device integrity is uncertain.
+4. Rotate affected management credentials and review unauthorized management sessions, root SSH logins, and changes that could survive reboot. A runtime account file returning to normal after restart does not establish that the device was never modified.
 
-修复应由维护者在可恢复的测试设备上验证：合法日志服务器仍可配置；异常字段被服务端拒绝或安全编码；生成的配置只包含预期目的地；日志服务不会因为无效输入中断；原有管理员 SSH 身份与 shell 不变。测试结果应明确固件版本和样本哈希，不能仅以网页输入框限制作为修复证明。
+## How to verify a fix
+
+Test on a recoverable device and record the exact firmware version and sample hash. A valid logging server should still work. Invalid `LogServer` input should be rejected or encoded without creating extra syslog-ng `source`, `log`, or `program()` statements, including with `Enable=false`. The previous configuration and logging service should survive a failed update. Finally, verify that a new administrator SSH session retains its intended UID, GID, and shell, and that restoring `Local` removes any temporary remote server value. A web-field restriction or an API success response alone is not sufficient evidence of a fix.

@@ -1,54 +1,65 @@
-# 技术分析：从认证后的日志配置到 root SSH
+# Technical analysis: from authenticated log configuration to root SSH
 
-## 研究范围与结论
+## Scope and observed result
 
-研究对象是 Zyxel EX3301-T0 的官方固件 `V5.50(ABVY.7.2)C0`。以下结论基于一台设备的固件静态分析及经过设备所有者授权的本机验证，不能自动推广到其他固件或设备。
+This case concerns one Zyxel EX3301-T0 running the official `V5.50(ABVY.7.2)C0` firmware. The findings combine static analysis of that firmware with an authorized test on the device. They do not establish that another firmware version, device revision, or management role is affected. The analyzed firmware sample has SHA-256 `1958230af33f46879f592f90fbd5cea0e16a51d5c352fa3c9560cb832df472bc`.
 
-**已验证的结果：**具有管理权限的用户能够通过日志服务器配置触发以 Linux `uid=0` 运行的进程。利用这一临时 root 执行通道修改*运行时*账户文件后，原 `admin` 账户在新的 SSH 会话中获得完整 root shell；独立的 SSH `id -u` 调用返回 `0`。
+An authenticated administrator was able to make a logging component execute with Linux `uid=0`. The temporary execution channel was then used to change only the running `admin` account's UID, GID, and login shell. A **new** SSH session reached a full root shell, and a separate `id -u` check returned `0`. That SSH result was verified only during the current boot.
 
-这是 **LogServer 字段进入 syslog-ng 配置文件时未正确处理** 的问题。SSH 服务只是后续验证和账户登录的入口，现有证据不支持将其描述为 Dropbear 或 SSH 协议漏洞。全过程需要先通过管理认证；没有验证未认证攻击路径。
+The entry point is **configuration syntax injection through `LogServer` into a generated syslog-ng file**. This is an authenticated privilege escalation. SSH served as the later login and verification path; the evidence does not identify a flaw in the SSH daemon, SSH protocol, or SSH authentication. No unauthenticated path was tested.
 
-## 信任边界
+## Trust boundary and execution path
 
 ```mermaid
 flowchart LR
-    A[已认证的管理会话] -->|PUT logset| B[DAL / RDM 配置]
-    B -->|LogServer 被写入配置文本| C[syslog-ng 配置生成器]
-    C -->|加载生成的配置| D[syslog-ng]
-    D -->|program source| E[root 身份的进程]
-    E -->|仅修改运行时账户文件| F[admin: UID/GID 0, /bin/sh]
-    F --> G[新的 SSH root shell]
+    A[Authenticated management session] -->|PUT logset| B[DAL and RDM log settings]
+    B -->|LogServer inserted into text| C[Generated syslog-ng configuration]
+    C -->|Configuration loaded| D[syslog-ng program source]
+    D -->|Observed UID 0 process| E[Temporary root execution]
+    E -->|Runtime account change| F[admin UID/GID 0 and /bin/sh]
+    F --> G[New SSH session with UID 0]
 ```
 
-1. 管理页面使用 `PUT /cgi-bin/DAL?oid=logset` 更新日志配置。前端限制输入长度并在 `Local` 模式禁用输入框；这些前端约束不是服务端安全边界。
-2. 固件的 DAL 函数在远程日志模式下将 `LogServer` 合并到 RDM 对象。已分析路径中未见针对该字段的 IP 地址语法校验；这不等于证明所有通用校验均不存在。
-3. 后端 `beLogSetup` 将 `LogServer` 作为未转义的字符串插入 syslog-ng 的 `udp("…")` 配置语法，并重建配置文件、重启日志服务。配置注入与把字符串直接拼接进启动 syslog-ng 的 shell 命令是两回事。
-4. 固件包含 syslog-ng 的 `program()` 驱动。该驱动会通过 `/bin/sh -c` 启动其程序源。设备上的一次受控验证观察到 `uid=0(root) gid=0(root)`。
-5. 此时取得的是临时 root **命令执行**，尚不是交互式 root SSH。随后仅将 `admin` 的运行时 UID、GID 和登录 shell 分别改为 `0`、`0`、`/bin/sh`，其密码字段保持不变，再进行新的 SSH 登录验证。
+1. The web interface submits logging settings through `PUT /cgi-bin/DAL?oid=logset`. Its `LogServer` input has a 127-character limit and is disabled in `Local` mode. Those client-side controls are not a server-side security boundary.
+2. In the analyzed DAL function, `Remote` and `LocalRemote` modes copy `LogServer` into the RDM log object. The decoded field path has no field-specific IP-address syntax check. This does **not** prove that every generic DAL or RDM validation check is absent.
+3. With a usable remote server value and TLS disabled, `beLogSetup` inserts `LogServer` as an unescaped `%s` inside a syslog-ng `udp("%s" ...)` destination. A colon in the server value selects the UDP6 format instead. The back end writes a temporary configuration, replaces the active one, and restarts logging. The analyzed flaw is in the **generated configuration language**, not direct interpolation into the shell command that starts syslog-ng. The TLS branch was observed in the binary but was not analyzed as a separate live exploit path.
+4. The shipped syslog-ng includes the `program()` source driver. Its implementation invokes `/bin/sh -c` for the program string. The generated configuration can therefore cross from logging data into process execution if additional valid syslog-ng statements are accepted and loaded.
 
-## 可复核的静态证据
+### Why `Enable=false` did not block the observed path
 
-官方 7.2C0 固件样本 SHA-256：`1958230af33f46879f592f90fbd5cea0e16a51d5c352fa3c9560cb832df472bc`。下表中的地址来自提取的 MIPS ELF 静态分析；地址及分支的含义以本项目这一固件样本为限。
+The original `logset` had `Enable=false`. In the analyzed back end, the remote destination is emitted **before** the `Enable` check. That check skips the normal per-category `log` routes when logging is disabled. A destination left unreferenced by those normal routes would not, by itself, reliably demonstrate command execution.
 
-| 组件 | 观察 | 代表位置 |
+The tested injection instead broke out of the destination's quoted value and supplied its **own top-level `source` and `log` statements**. That route can connect a `program()` source to the emitted destination without relying on the category routes skipped by `Enable=false`. The static configuration grammar supports those statement types, and the authorized device test observed the resulting root UID. The offline demo shows the string-expansion boundary only; on its own it cannot prove acceptance, service startup, or execution on a device.
+
+This distinction matters for fixes: disabling ordinary logging routes does not make an unescaped value safe if the configuration parser can still read injected top-level statements.
+
+## Static evidence from the 7.2C0 sample
+
+The addresses below refer to the extracted MIPS ELF files from the named firmware sample. They are not portable offsets for other builds.
+
+| Component | Relevant observation | Representative location |
 | --- | --- | --- |
-| `/lib/libzcfg_fe_dal.so` | `zcfgFeDalLogSettingcfg` 读取并合并 `LogMode`、`LogServer` | `0xDE614`；读取 `0xDE698–0xDE6F8` |
-| `/lib/private/libzcfg_be.so` | `beLogSetup` 将日志服务器字段放入 syslog-ng 配置格式串 | `0xF8B48`；UDP 写入 `0xF94EC–0xF9538` |
-| `/lib/private/libzcfg_be.so` | 生成临时配置，替换正式配置并重启 syslog-ng | `0xFA3F8–0xFA4E8` |
-| `/usr/lib/syslog-ng/libafprog.so` | `program()` 驱动执行 `/bin/sh -c` | `0x2A98–0x2ABC` |
+| `/lib/libzcfg_fe_dal.so` | `zcfgFeDalLogSettingcfg` reads `LogMode` and `LogServer`, merges remote-mode values, and skips a `LogServer` update in effective `Local` mode | `0xDE614`; reads at `0xDE698–0xDE6F8`; mode-dependent update at `0xDEA50–0xDEC38` |
+| `/lib/private/libzcfg_be.so` | `beLogSetup` emits the remote destination using the unescaped server value | `0xF8B48`; UDP write at `0xF94EC–0xF9538` |
+| `/lib/private/libzcfg_be.so` | The destination is written before the `Enable` category-route gate; the back end replaces the configuration and restarts syslog-ng | gate at `0xF97B8`; replacement/restart at `0xFA3F8–0xFA4E8` |
+| `/usr/lib/syslog-ng/libafprog.so` | The `program()` driver launches its program through `/bin/sh -c` | `0x2A98–0x2ABC` |
 
-这条路径还解释了一个恢复细节：有效模式为 `Local` 时，DAL 跳过 `LogServer` 更新。因此，在验证后直接一次性提交 `Local` 和原始 `LogServer` 值不能可靠地清除暂存字段。原始记录是在远程模式下先清除该字段、读取确认，再恢复 `Local` 并比对完整日志配置；每次提交都可能重启日志服务。
+The firmware analysis explains the mechanism and the order of configuration generation. It cannot, without the device observation, prove that a candidate value passes all validation, parses as intended, or runs with a particular UID.
 
-## 活机验证与限制
+## Authorized device observations
 
-| 阶段 | 观察 | 可以得出的结论 |
+| Stage | Observation | Supported conclusion |
 | --- | --- | --- |
-| 初始 SSH | `admin` 登录进入 `ZySH>`；相同凭据直接登录 `root` 失败 | 管理员账户最初没有直接获得 Linux root shell |
-| 临时执行 | 管理员 SSH PTY 中出现 `uid=0(root) gid=0(root)` | 日志配置链在该固件设备上实现了 root 命令执行；当时尚未获得交互式 root SSH |
-| 账户提升 | `admin` 的运行时 UID/GID 从 `21` 变为 `0`，shell 从 `/usr/bin/zysh` 变为 `/bin/sh` | 后续 SSH 会话使用了 Linux root 身份；密码字段及其他账户未改变 |
-| 独立 SSH 复验 | 新会话成功，`id -u` 输出 `0` | 当前启动周期内的完整 root SSH 已验证 |
-| 清理 | 原日志配置字段完整恢复；未因这次提权写固件分区或切换启动槽 | 临时注入配置已清除；不构成设备整体安全状态证明 |
+| Baseline SSH | `admin` entered the restricted `ZySH>` interface; the same credentials did not log in directly as `root` | The initial administrator login did not provide a Linux root shell |
+| Logging test | A separate administrator SSH PTY displayed `uid=0(root) gid=0(root)` | The logging configuration path produced a UID 0 process on this device; this was not yet an interactive root SSH login |
+| Runtime account change | `admin` UID/GID changed from `21` to `0`, and the shell changed from `/usr/bin/zysh` to `/bin/sh`; its password field and other accounts were left unchanged | The temporary root channel promoted the running account rather than changing SSH authentication |
+| Independent SSH check | A new SSH session succeeded and `id -u` returned `0` | Full root SSH was verified for the current boot |
+| Cleanup | The original logging fields were read back after restoration; this privilege-escalation test did not write a firmware partition or switch a boot slot | The temporary logging configuration was removed, without claiming a complete device security audit |
 
-`/etc/passwd` 指向运行时的 `/tmp/var/passwd`。原厂账户生成流程可能在重启或重新生成账户时覆盖本次修改；**没有验证 admin 的 root SSH 权限可以跨重启保留**。后来使用系统 `passwd` 修改 root 的运行时密码并完成新 SSH 登录验证，但该变更未同步到原厂账户数据，也没有验证重启持久性。这两项运行时变更不应写成永久提权。其他账户的创建或开机持久化方案不属于已验证成果。
+`/etc/passwd` points to the runtime `/tmp/var/passwd`. The stock account-generation process may overwrite this change on restart or when accounts are regenerated. **Root SSH for `admin` was not verified across a reboot.** A later runtime root-password change and new SSH login were also observed, but that password change was not synchronized with the stock account data and has no verified reboot persistence. Neither runtime change should be described as permanent access.
 
-本仓库不提供设备凭据、配置备份、固件二进制或可直接针对设备运行的载荷。具体设备地址、SSH 主机指纹和个人网络标识也未收录。
+## Configuration restoration nuance
+
+When the effective mode is `Local`, the analyzed DAL skips a submitted `LogServer` update. Submitting `Local` and the original server value in a single request therefore cannot reliably clear a temporarily stored remote value. In the recorded restoration, the server field was reset and read back while the mode was still `Remote` or `LocalRemote`; only then was `Local` restored and the complete original `logset` compared. Each submission can regenerate the file and restart logging, so a successful API response alone is not proof that cleanup completed.
+
+The repository contains a sanitized [evidence summary](evidence.md) and an [offline string demo](../tools/offline-demo.mjs). It contains no device credentials, configuration backup, firmware binary, personal network address, SSH host fingerprint, or live device-writing client. The scope does not include unrelated services or account-persistence schemes.

@@ -1,52 +1,83 @@
-# Zyxel EX3301-T0：从 Y1 后台到 root SSH 的实证记录
+# EX3301-T0: from stock Y1 access to a root SSH shell
 
-这是一台本人管理的 EX3301-T0 的研究记录。它整理了从 Hyperoptic Y1 后台访问、官方 C0 固件迁移，到在 `V5.50(ABVY.7.2)C0` 上取得 root 进程和完整 root SSH 会话的证据。本文所说的漏洞是**认证后的日志配置注入**，并非 SSH 服务自身的认证绕过。
+This repository documents one owner-authorized Zyxel EX3301-T0 investigation. The device started on Hyperoptic `V5.50(ABVY.4.1)Y1`, was upgraded to official Zyxel `V5.50(ABVY.7.2)C0`, and was then used to verify an **authenticated LogServer-to-syslog-ng configuration injection**. A temporary root process was observed. A separate change to the runtime `admin` account made a fresh SSH session run as `uid=0`.
 
-项目只包含脱敏的研究材料和离线演示；不含密码、Cookie、证书指纹、设备序列号、固件镜像、配置备份或个人网络地址。后续第三方固件安装不在范围内。
+The vulnerability is in log configuration generation, **not in the SSH protocol or Dropbear authentication**. The full root SSH result was verified for the current boot only. No reboot-persistent root access was demonstrated.
 
-## 已验证结果
+The repository contains sanitized notes and a local-only string demo. It contains no passwords, session tokens, certificate or host-key fingerprints, serial number, MAC address, personal network address, configuration backup, or firmware image. Later third-party firmware work is outside this case study.
 
-| 阶段 | 结果 |
+## Tested scope
+
+| Item | Evidence-backed value |
 | --- | --- |
-| Hyperoptic Y1 | 网页管理员为 `medium`；将 `Firmware_Upgrade` 加入其可见页面后，上传入口出现。此步骤不改变 Linux UID。 |
-| 官方 C0 | 在已关闭 `fwidcheck`、`modelcheck` 的实机上，官方 `V5.50(ABVY.7.2)C0` 启动，网页和 SSH 登录成功。 |
-| 普通 SSH | `admin` 登录是受限 `ZySH>`；原有凭据直接登录 `root` 失败。 |
-| 命令执行 | 经认证的 `LogServer` 值被写入 syslog-ng 配置；临时证明命令返回 `uid=0(root) gid=0(root)`，随后日志配置恢复。 |
-| root SSH | 临时 root 通道修改本次启动的 `admin` UID、GID 与 shell；新 SSH 会话及独立 `id -u` 均返回 0。 |
+| Hardware | One Zyxel EX3301-T0 |
+| Starting firmware | Hyperoptic `V5.50(ABVY.4.1)Y1` |
+| Firmware used for root verification | Official `V5.50(ABVY.7.2)C0` |
+| Starting web role | `medium` administrator |
+| SSH baseline | `admin` reached restricted `ZySH>` on Y1 and C0; a direct `root` login with the existing administrator credential failed on C0 |
+| Proven root behavior | `id` printed `uid=0(root) gid=0(root)`; after a runtime account change, a new SSH session independently returned `id -u = 0` |
 
-**持久性边界：** root SSH 只在当前启动得到验证。原厂会重建运行时账户文件，未证明重启后仍保留该权限。后续 root 密码修改也仅验证了当前运行时；本文不把它称为永久方案。
+No claim is made for other hardware revisions, firmware versions, unauthenticated users, or access from the WAN.
 
-## 技术路径
+## The observed sequence
+
+1. **Find the router on a direct Ethernet link.** The originally guessed management address was wrong. The computer's network details identified the actual default gateway, which led to the Y1 web interface.
+2. **Reveal the firmware upgrade page.** The authenticated `medium` administrator's `login_privilege` `Page` list was updated to include `Firmware_Upgrade`; a fresh `MenuList` response showed the page. This changed web navigation, not Linux identity or firmware acceptance.
+3. **Keep SSH on the LAN.** The SSH management service was set to `LAN_ONLY`, read back, and used for the restricted `ZySH>` login.
+4. **Turn off two Y1 runtime image checks.** The exact `zycli` commands and observed readback are below. After this, one retry of the official 7.2C0 image booted successfully. The sequence does not establish which check caused the earlier upload failure, and the two switches are separate from RSA signature verification.
+5. **Prove root execution on C0.** Before the test, `admin` still entered restricted `ZySH>` and a direct `root` login with the existing credential failed. The authenticated `logset` API then accepted a `LogServer` value that broke out of a syslog-ng destination string and introduced a `program()` source and `log` route. An independent SSH PTY showed `uid=0(root) gid=0(root)`. The original logging object was restored through two ordered writes and full readback.
+6. **Verify root SSH separately.** The temporary root channel changed only the runtime `admin` UID/GID and login shell. A fresh password-based SSH login and a separate `id -u` command both proved root identity. The password field and other accounts were unchanged. This was **not** verified across a reboot.
+
+### Exact Y1 `fwidcheck` and `modelcheck` commands
+
+After logging into the router's **LAN-only SSH** as `admin`, the prompt was `ZySH>`. Use your own router address in place of `<ROUTER_LAN_IP>`:
+
+```text
+ssh admin@<ROUTER_LAN_IP>
+ZySH> zycli modelcheck show
+The modelcheck is enable now. ret:0
+ZySH> zycli fwidcheck show
+The fwidcheck is enable now. ret:0
+ZySH> zycli modelcheck off
+ZySH> zycli fwidcheck off
+ZySH> zycli modelcheck show
+The modelcheck is disable now. ret:-17
+ZySH> zycli fwidcheck show
+The fwidcheck is disable now. ret:-17
+```
+
+The `off` response itself was not retained; the final `show` lines are the observed Y1 readback before uploading C0. The extracted **C0** command table labels these switches runtime checks and states `#Not support save to flash#`; this static help is not a Y1 reboot test. Their state after the C0 reboot was **not** established: later `show` calls returned to the prompt without status text. See [Firmware check commands](docs/firmware-checks.md) for the exact evidence and limits. Do not treat these commands as a generic unsigned-image or RSA-signature bypass.
+
+## Mechanism at a glance
 
 ```mermaid
 flowchart LR
-    A[已认证的网页管理员] --> B[PUT logset: LogServer]
-    B --> C[未转义进入 syslog-ng 配置]
-    C --> D[program source 以 root 执行]
-    D --> E[修改运行时 admin UID/GID/shell]
-    E --> F[新的 SSH 会话获得 uid 0]
+    A[Authenticated web administrator] --> B[PUT logset: LogServer]
+    B --> C[Unescaped syslog-ng config text]
+    C --> D[program source executed as root]
+    D --> E[Runtime admin UID/GID and shell changed]
+    E --> F[Fresh SSH session has uid 0]
 ```
 
-- [时间线](docs/chronology.md)：各阶段发生了什么。
-- [技术分析](docs/technical-analysis.md)：入口、配置生成链和 root 执行机制。
-- [证据与局限](docs/evidence.md)：观察值、静态分析、未验证事项。
-- [复现与恢复](docs/reproduction.md)：在授权设备上如何逐项核对和恢复。
-- [修复建议](docs/mitigation.md)：对厂商和设备管理员的建议。
-- [离线演示](tools/offline-demo.mjs)：只在本机展示配置字符串如何被打断，不连接设备。
+The original `Enable=false` setting did not prevent the proof because the injected text supplied its own `source` and `log` statements. A normal destination-only route would depend on the firmware's category logging gate. See [Technical analysis](docs/technical-analysis.md) for the static call chain and the separate live observations.
 
-## 离线演示
+## Read the case study
 
-需要 Node.js 20 或更新版本，不需要依赖包：
+- [Chronology](docs/chronology.md) — initial access through the root SSH verification.
+- [Firmware check commands](docs/firmware-checks.md) — how the two Y1 checks were turned off and what the readback proves.
+- [Technical analysis](docs/technical-analysis.md) — authenticated input, config generation, root process, and runtime account promotion.
+- [Evidence and limits](docs/evidence.md) — sanitized evidence ledger with hashes of private originals.
+- [Reproduction and restoration](docs/reproduction.md) — staged verification and the two-write log restoration order.
+- [Mitigations](docs/mitigation.md) — firmware and administrator actions.
+- [Security policy](SECURITY.md) — how to report additional affected versions privately.
+
+## Run the offline demonstration
+
+Node.js 20 or newer is sufficient; there are no package dependencies:
 
 ```sh
 npm test
 npm run demo
 ```
 
-演示只验证字符串拼接与长度边界；它不证明其他固件版本受影响，也不会登录或修改路由器。
-
-## 适用范围
-
-实机验证范围为官方 `V5.50(ABVY.7.2)C0`、EX3301-T0、已认证的网页管理员会话和同一局域网中的 SSH。没有对其他型号、运营商版本或当前最新固件作漏洞结论。固件迁移过程是这台设备的历史记录，不是通用刷机建议。
-
-如发现新的影响范围或修复版本，请先通过 [SECURITY.md](SECURITY.md) 中的方式联系维护者，再决定公开细节。
+The test and demo only expand the observed syslog-ng format string in local memory. They do not log in, open a network connection, write router settings, or prove another firmware is vulnerable.

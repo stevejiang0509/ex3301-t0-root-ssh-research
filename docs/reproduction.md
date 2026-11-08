@@ -1,40 +1,83 @@
-# 复核流程与恢复顺序
+# Reproducing the observations and restoring state
 
-本页记录已经完成的验证流程，供设备所有者在可恢复的测试环境中核对。请先阅读 [证据与结论边界](evidence.md)。本项目不含登录自动化或直接连接设备的脚本；`npm run demo` 只做离线字符串展开。
+This is a record of a completed, owner-authorized investigation on **one** EX3301-T0. It distinguishes the Y1-to-C0 firmware transition, temporary root command execution, and a later root SSH login. It is not a universal firmware upgrade procedure. The included JavaScript demo runs entirely offline; this repository does not distribute a credential-handling or device-writing client.
 
-## 1. 确认环境
+## 1. Identify the device and establish bounded access
 
-- 核对硬件为 EX3301-T0，当前系统为官方 `V5.50(ABVY.7.2)C0`。Y1 → C0 的历史过程见[时间线](chronology.md)；在已有 C0 的设备上，无须重复刷机。
-- 电脑位于设备可信局域网。使用自己的管理凭据登录网页；独立 SSH 会话可用且管理范围限制在 LAN。核对目标设备的证书和 SSH 主机密钥，避免连到同网段的其他设备。
-- 先保存**完整的原始 `logset` 对象**与账户文件的安全备份，并准备独立恢复入口。日志配置提交会重建配置并重启日志服务，即使只执行只读的 UID 探针也会影响服务。
-- 记录原始 `Enable`、`LogMode`、`LogServer`、TLS、UDP 端口及其他字段。原始验证时为 `Enable=false`、`LogMode=Local`、`LogServer=0.0.0.0`、TLS 关闭、端口 514；其他设备不能假设相同。
+1. Connect a computer directly to a LAN port by Ethernet. Determine the management address from the computer's gateway and ARP information instead of assuming that an address found in an earlier session still belongs to this router.
+2. Check the displayed model and exact firmware version. The observed starting point was EX3301-T0 on Hyperoptic `V5.50(ABVY.4.1)Y1`.
+3. Authenticate with the owner's web administrator account. Its web role was `medium`; this is separate from Linux UID and SSH shell privileges.
+4. If the firmware page is absent, record the original `login_privilege` object before changing it. In this case, the role's `Page` string gained the `Firmware_Upgrade` ID while its other selected fields were preserved. A fresh `MenuList` readback showed the page. This only exposed web navigation; it did not make an image compatible or remove signature validation.
+5. Set the SSH management service to `Mode=LAN_ONLY`, then read the service configuration back. Do not infer a LAN restriction merely from a successful local login. The original record showed `LAN_ONLY` and enabled port 22 after the change.
 
-## 2. 离线确认注入机制
+The original web login and DAL writes used the firmware's encrypted request envelope and session token. A plain unauthenticated JSON `PUT` is not equivalent to the browser's protocol. The repository omits live login code because it would need device-specific pins, credentials, and recovery handling.
 
-在本机运行 `npm test` 和 `npm run demo`，观察 `LogServer` 值如何在 `destination d_server{udp("%s" ...)}` 中提前结束字符串、目的地语句，再引入新的 `source` 与 `log` 语句。示例长度为 126 字节；前端当时标示的最大长度为 127。这里仅验证字符串形态，不证明另一台设备会接受或执行它。
+## 2. Disable the two Y1 runtime firmware checks
 
-## 3. 在授权设备上核对 root 执行
+The verified Y1 SSH session entered `ZySH>`, not a Linux shell. From this prompt, the owner used `zycli modelcheck off` and `zycli fwidcheck off`, with `show` before and after. The [firmware check command page](firmware-checks.md) gives the exact transcript and source boundaries; the short version is:
 
-1. 从**已认证**的管理会话读取 `GET /cgi-bin/DAL?oid=logset`，保存并核对基线。设备使用加密封装和会话令牌；直接发送普通 JSON 请求与实际网页协议不同。
-2. 在确认具备回滚路径后，仅临时修改 `LogMode` 为远程相关模式和 `LogServer` 为测试值，保留其他字段。读取配置确认修改被服务端接受。该步骤会重启日志服务。
-3. 在**另一个**局域网 SSH PTY 中观察测试命令输出。原始实机记录显示 `uid=0(root) gid=0(root)`。管理 API 的成功响应、脚本状态或单独的静态分析都不能替代这个运行时观察。
-4. 立即按下一节恢复原值，再逐字段核对；如果任一步失败，停止进一步提权操作并使用已准备的恢复入口处理。
+```text
+ZySH> zycli modelcheck off
+ZySH> zycli fwidcheck off
+ZySH> zycli modelcheck show
+The modelcheck is disable now. ret:-17
+ZySH> zycli fwidcheck show
+The fwidcheck is disable now. ret:-17
+```
 
-## 4. 必须按顺序恢复日志配置
+The disabled-state text is the observed Y1 `show` response. The extracted **C0** command table describes runtime checks and says the switches are not saved to flash; it is static command help, not a Y1 reboot test. Their post-reboot state was not established. These controls are distinct from the C0 RSA image signature check and do not justify flashing an unsigned or mismatched image.
 
-已分析的 DAL 在有效模式为 `Local` 时会忽略 `LogServer` 更新。因此原始记录用了两次提交：
+After recording the checks, the owner uploaded an official `V5.50(ABVY.7.2)C0` image once through the revealed web page. The first Y1 upload attempt, before this change, had failed; its exact backend rejection subcheck was never proven. On reboot the web UI displayed 7.2C0, the original administrator logged in, and LAN-only SSH worked. This observed sequence is evidence for this device and image, not a guarantee for another unit.
 
-1. 保持 `LocalRemote` 或 `Remote`，先把 `LogServer` 清回原值，读取确认该字段确已清除。
-2. 再把 `LogMode` 恢复原值，读取并比较**完整** `logset` 对象。只看到“成功”响应不足以证明清理完成。
+## 3. Establish the C0 starting privilege
 
-每次提交都可能重启日志服务。若设备原始日志设置不同，应根据其原始对象设计恢复值，不能照搬本记录的默认字段。
+On C0, `admin` still entered `ZySH>`. The existing administrator credential did not log in as `root`, and a shell command typed into ZySH was rejected. This matters: the later root proof did not start with a root SSH login.
 
-## 5. 区分 root 执行与 root SSH
+The firmware used for static analysis had SHA-256 `1958230af33f46879f592f90fbd5cea0e16a51d5c352fa3c9560cb832df472bc`. The [technical analysis](technical-analysis.md) traces the authenticated `LogServer` value through DAL/RDM to a syslog-ng configuration string. The offline model can be run with:
 
-`id` 返回 0 只证明短暂的 root 命令执行。原始研究在此之后，利用该临时通道修改**当前启动的运行时** `admin` 账户文件，仅把 UID、GID 和登录 shell 改为 root 对应值；密码字段和其他账户保持不变。随后使用**新的** SSH 会话登录，独立执行 `id -u`，得到 `0`。两个验证阶段之间不能省略账户文件的差异核对。
+```sh
+npm test
+npm run demo
+```
 
-该账户文件位于 RAM 支持的运行时路径，原厂账户生成逻辑可重建它。没有经过重启验证的步骤一律不得写成永久 root SSH。为保护设备所有者，本仓库也不分发当时的账户文件、凭据或可直接改写账户的联网脚本。
+Its example value is 126 bytes and illustrates a break out of `udp("%s" ...)` into a top-level `source` and `log` route. This local string expansion does not establish live execution by itself.
 
-## 6. 复核结果应包含
+## 4. Prepare a logset baseline before any live probe
 
-记录固件的完整版本与样本哈希、认证前提、每次配置读取的非敏感字段、root UID 的独立观察、配置完整恢复结果、SSH 新会话的 UID、运行时账户文件的最小差异，以及是否发生重启。不要把密码、密钥、序列号、MAC、个人地址或原始配置上传到问题报告。
+1. Read the **complete** authenticated `GET /cgi-bin/DAL?oid=logset` object, and store a private recovery copy outside this repository.
+2. Confirm the device model, firmware, administrator role, management connection, SSH PTY, and an independent recovery path. Do not substitute a screenshot or a partial field list for the original object.
+3. Record `Enable`, `LogMode`, `LogServer`, TLS mode, port, and all remaining fields. This device's original critical values were `Enable=false`, `LogMode=Local`, `LogServer=0.0.0.0`, TLS off, and UDP port 514. Other devices may differ.
+4. Remember that a logset write regenerates syslog-ng configuration and restarts logging services. Even a read-only UID command inside the injected program is not a read-only router operation.
+
+At this stage the normal `ZySH>` session did **not** have a Linux account-file backup route. The runtime account-file backup was made later, after the temporary root channel was proven and before any account modification.
+
+## 5. Distinguish temporary root execution from SSH root access
+
+The bounded live probe changed only `LogMode` and `LogServer`, then read them back. The injected syntax supplied its own syslog-ng `source` and `log` statements, so the original `Enable=false` category gate did not prevent this proof. An independent LAN SSH PTY showed:
+
+```text
+uid=0(root) gid=0(root)
+```
+
+That observation proves a root process ran on this C0 device. It does **not** yet prove an interactive root SSH shell. The probe's own status file did not capture the UID; the separate SSH observation was the runtime proof. The temporary log configuration was then restored as described next, without a firmware flash or boot-slot change.
+
+## 6. Restore `LogServer` in two ordered writes
+
+The analyzed DAL skips `LogServer` updates when the effective mode is `Local`. Consequently, combining `LogMode=Local` and the original `LogServer` in one request does not reliably clear the injected string.
+
+1. While the effective mode is `LocalRemote` or `Remote`, set `LogServer` back to its saved original value. Read the object and verify the field was actually cleared.
+2. Set `LogMode` back to its saved original value. Read the **entire** object and compare it with the pre-probe backup, including fields not explicitly edited.
+
+Both writes can restart the logging service. An HTTP success response alone is insufficient. If a write or readback fails, stop further steps and use the prepared recovery path. The original owner session reported all original logset fields equal after restoration.
+
+## 7. Promote the runtime account and verify a new SSH session
+
+Only after root execution was established did the investigation prepare a backup of the runtime account file. On this C0 system `/etc/passwd` pointed to `/tmp/var/passwd`. The temporary root channel made a working copy and changed **only** `admin` from UID/GID `21/21` to `0/0` and its shell from `/usr/bin/zysh` to `/bin/sh`. The password field, GECOS/home fields, ownership/mode, and all other account entries were checked unchanged.
+
+This account edit was performed through the temporary root command channel; the commands were **not** accepted by the initial `ZySH>` prompt. A fresh password-based SSH login then showed `uid=0(root) gid=0(root)`, and an independent SSH `id -u` returned `0` with exit code 0. The change was to a runtime file, so a reboot or OEM account regeneration may undo it. No persistent startup hook was installed or verified.
+
+The later change to the root password was a separate runtime action, not a prerequisite for this exploit chain. Its new SSH login worked during the same boot, but survival across a reboot was not tested.
+
+## What a new verification report should contain
+
+Record the exact model and firmware hash, authenticated preconditions, sanitized pre/post logset fields, the independent UID observation, two-step restoration and full-object comparison, the minimal runtime account diff, a fresh SSH UID result, and whether the router rebooted. Do not publish credentials, session data, host keys, device identifiers, private IPs, full configuration exports, or raw firmware dumps.
