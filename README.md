@@ -4,7 +4,7 @@ This repository documents one owner-authorized Zyxel EX3301-T0 investigation. Th
 
 The vulnerability is in log configuration generation, **not in the SSH protocol or Dropbear authentication**. The full root SSH result was verified for the current boot only. No reboot-persistent root access was demonstrated.
 
-The repository contains sanitized notes and a local-only string demo. It contains no passwords, session tokens, certificate or host-key fingerprints, serial number, MAC address, personal network address, configuration backup, or firmware image. Later third-party firmware work is outside this case study.
+The repository contains sanitized notes and a local-only string demo. It contains no passwords, session tokens, certificate or host-key fingerprints, serial number, MAC address, personal network address, configuration backup, or firmware image. A separate [SSH OpenWrt migration record](docs/ssh-openwrt-migration.md) describes what happened on this same device after the root SSH proof.
 
 ## Tested scope
 
@@ -21,7 +21,7 @@ Our live root proof covers only the device and C0 image above. Zyxel's separate 
 
 ## Zyxel's official affected-product list
 
-Zyxel's [21 July 2026 advisory for CVE-2026-6952](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) describes an administrator-authenticated command injection in the syslog `LogServer` field. It lists **EX3301-T0 `5.50(ABVY.8)C0` and earlier** as affected and **`5.50(ABVY.8.1)C0`** as the available patch. Thus the `7.2C0` build tested here falls within Zyxel's published affected range. The advisory lists **42 affected models**: 29 DSL/Ethernet CPE models, 10 fiber ONTs, and 3 wireless extenders. The [complete official list](docs/official-advisory.md) includes every model, affected version, and listed patch.
+Zyxel's [21 July 2026 advisory for CVE-2026-6952](https://www.zyxel.com/global/en/support/security-advisories/zyxel-security-advisory-for-post-authentication-command-injection-vulnerability-in-certain-dsl-ethernet-cpe-fiber-onts-and-wireless-extenders-07-21-2026) describes an administrator-authenticated command injection in the syslog `LogServer` field. It lists **EX3301-T0 `5.50(ABVY.8)C0` and earlier** as affected and **`5.50(ABVY.8.1)C0`** as the available patch. Thus the `7.2C0` build tested here falls within Zyxel's published affected range. The advisory lists **42 affected models**: 29 DSL/Ethernet CPE models, 10 fiber ONTs, and 3 wireless extenders. The [companion model-scope repository](https://github.com/stevejiang0509/zyxel-cve-2026-6952-model-scope) maintains the complete vendor table and cross-model evidence status; this repository records the EX3301-T0 case.
 
 Zyxel explicitly excludes ISP-customized models from that table. The earlier Hyperoptic Y1 build in this device's history was **not** separately tested for the LogServer vulnerability. The vendor's patch listing is not a local validation that `8.1C0` is safe to install on an ISP-customized unit; Zyxel directs ISP customers to their provider for the appropriate firmware. The advisory confirms the `LogServer` entry point and OS-command effect; the syslog-ng configuration path and `uid=0` result below come from this project's own analysis and test.
 
@@ -67,15 +67,22 @@ flowchart LR
 
 The original `Enable=false` setting did not prevent the proof because the injected text supplied its own `source` and `log` statements. A normal destination-only route would depend on the firmware's category logging gate. See [Technical analysis](docs/technical-analysis.md) for the static call chain and the separate live observations.
 
+## Related research on the same device
+
+The [SSH OpenWrt migration record](docs/ssh-openwrt-migration.md) documents two later, distinct installations without opening the case: official 7.2C0 to Matrix v17, then Matrix v17 to a community UBI OpenWrt image. Both stages used root SSH, but the second needed a device- and image-specific slot0 installer and full flash readback. This does not establish a generic one-step C0-to-UBI upgrade or a universal SSH install method.
+
+The [companion CVE-2026-6952 model-scope repository](https://github.com/stevejiang0509/zyxel-cve-2026-6952-model-scope) covers Zyxel's wider advisory and keeps the other 41 models separate from this one-device live root proof.
+
 ## Read the case study
 
 - [Chronology](docs/chronology.md) — initial access through the root SSH verification.
-- [Official advisory scope](docs/official-advisory.md) — Zyxel's CVE-2026-6952 model list, affected versions, and patch versions.
+- [Official advisory scope](docs/official-advisory.md) — the EX3301-T0 advisory entry and a link to the companion 42-model matrix.
 - [Firmware check commands](docs/firmware-checks.md) — how the two Y1 checks were turned off and what the readback proves.
 - [Technical analysis](docs/technical-analysis.md) — authenticated input, config generation, root process, and runtime account promotion.
 - [Evidence and limits](docs/evidence.md) — sanitized evidence ledger with hashes of private originals.
 - [Reproduction and restoration](docs/reproduction.md) — staged verification and the two-write log restoration order.
 - [Mitigations](docs/mitigation.md) — firmware and administrator actions.
+- [SSH OpenWrt migration](docs/ssh-openwrt-migration.md) — the later Matrix and community UBI installations on this device.
 - [Security policy](SECURITY.md) — how to report additional affected versions privately.
 
 ## Run the offline demonstration
